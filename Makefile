@@ -7,6 +7,9 @@ IMAGE_PREFIX      ?= mylatex
 TEXLIVE_IMAGE     ?= texlive/texlive:latest
 DOCKER_BUILD_OPTS ?=
 STYLE             ?=
+# Repository URL recorded as org.opencontainers.image.source; ghcr.io uses it
+# to link the package to the GitHub repository.
+SOURCE_URL        ?=
 
 # Available styles as <name>/<version>.
 STYLES := $(patsubst $(ROOT)/style/%/,%,$(wildcard $(ROOT)/style/*/*/))
@@ -39,6 +42,8 @@ define HELP
                      (例: ghcr.io/<user>/mylatex)
   TEXLIVE_IMAGE      ベースの TeX Live イメージ (既定: texlive/texlive:latest)
   DOCKER_BUILD_OPTS  docker build への追加オプション (例: --pull)
+  SOURCE_URL         イメージに記録するリポジトリの URL (ghcr.io でリポジトリと紐付く)
+                     (例: https://github.com/<user>/<repo>)
 
 例
   make build
@@ -66,6 +71,7 @@ $(BUILD_TARGETS): build/%:
 	  --build-arg STYLE_VERSION=$(call style_version,$*) \
 	  --build-arg ENGINE=$(call style_engine,$*) \
 	  --build-arg IMAGE=$(call style_image,$*) \
+	  $(if $(SOURCE_URL),--label org.opencontainers.image.source=$(SOURCE_URL)) \
 	  -t $(call style_image,$*) $(ROOT)
 	@newest=$$(printf '%s\n' $(filter $(call style_name,$*)/%,$(STYLES)) | sort -V | tail -n 1); \
 	if [ "$$newest" = "$*" ]; then \

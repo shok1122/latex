@@ -3,19 +3,19 @@
 学会などのスタイル一式を焼き込んだ Docker イメージを，スタイル・版ごとに作成します．
 原稿フォルダをマウントしてコンテナを実行すると PDF ができます．
 
-| スタイルフォルダ      | イメージ名                                      |
-| --------------------- | ----------------------------------------------- |
-| `style/ieicej/3.4a/`  | `mylatex/ieicej:3.4a`（最新版には `:latest` も付与） |
+| スタイルフォルダ      | イメージ名                                                    |
+| --------------------- | ------------------------------------------------------------- |
+| `style/ieicej/3.4a/`  | `ghcr.io/shok1122/mylatex/ieicej:3.4a`（最新版には `:latest` も付与） |
 
-以下ではイメージ名を `mylatex/ieicej:3.4a` と書きます．レジストリから取得する場合は，
-`ghcr.io/<user>/mylatex/ieicej:3.4a` のようにレジストリを含めた名前に読み替えてください．
+イメージは main ブランチへの push を契機に GitHub Actions でビルドされ，
+GitHub Container Registry (ghcr.io) に公開されます（[イメージの作成](#イメージの作成管理者向け) を参照）．
 
 ## 使い方（原稿のコンパイル）
 
 ### 準備
 
 ```sh
-docker pull mylatex/ieicej:3.4a
+docker pull ghcr.io/shok1122/mylatex/ieicej:3.4a
 ```
 
 ### 基本
@@ -32,48 +32,48 @@ root/
 
 ```sh
 cd root
-docker run --rm -v "$PWD":/work mylatex/ieicej:3.4a main.tex
+docker run --rm -v "$PWD":/work ghcr.io/shok1122/mylatex/ieicej:3.4a main.tex
 ```
 
 `root/main.pdf` ができます．引数なしで実行するとヘルプを表示します．
 
 ```sh
-docker run --rm mylatex/ieicej:3.4a
+docker run --rm ghcr.io/shok1122/mylatex/ieicej:3.4a
 ```
 
 ### 実行例
 
 ```sh
 # 大元のファイルを指定 (paper.pdf を出力)
-docker run --rm -v "$PWD":/work mylatex/ieicej:3.4a paper.tex
+docker run --rm -v "$PWD":/work ghcr.io/shok1122/mylatex/ieicej:3.4a paper.tex
 
 # PDF を dist/ に出力
-docker run --rm -v "$PWD":/work mylatex/ieicej:3.4a main.tex -o dist
+docker run --rm -v "$PWD":/work ghcr.io/shok1122/mylatex/ieicej:3.4a main.tex -o dist
 
 # サブフォルダにある原稿 (paper/main.pdf を出力)
-docker run --rm -v "$PWD":/work mylatex/ieicej:3.4a paper/main.tex
+docker run --rm -v "$PWD":/work ghcr.io/shok1122/mylatex/ieicej:3.4a paper/main.tex
 
 # 保存のたびに自動でコンパイル (Ctrl-C で終了．-it を付ける)
-docker run --rm -it -v "$PWD":/work mylatex/ieicej:3.4a -w main.tex
+docker run --rm -it -v "$PWD":/work ghcr.io/shok1122/mylatex/ieicej:3.4a -w main.tex
 
 # 中間ファイル (.build/) を削除
-docker run --rm -v "$PWD":/work mylatex/ieicej:3.4a --clean
+docker run --rm -v "$PWD":/work ghcr.io/shok1122/mylatex/ieicej:3.4a --clean
 
 # エンジンを変更
-docker run --rm -v "$PWD":/work mylatex/ieicej:3.4a main.tex -e pdflatex
+docker run --rm -v "$PWD":/work ghcr.io/shok1122/mylatex/ieicej:3.4a main.tex -e pdflatex
 
 # イメージ内のスタイル一式 (テンプレートを含む) を ./style に取り出す
-docker run --rm -v "$PWD":/work mylatex/ieicej:3.4a --export-style
+docker run --rm -v "$PWD":/work ghcr.io/shok1122/mylatex/ieicej:3.4a --export-style
 
 # スタイル名・エンジン・TeX Live の版・同梱ファイルを表示
-docker run --rm mylatex/ieicej:3.4a --info
+docker run --rm ghcr.io/shok1122/mylatex/ieicej:3.4a --info
 ```
 
 毎回入力するのが面倒であれば，シェルに関数を定義しておくと便利です．
 
 ```sh
 # ~/.bashrc など
-ieicej() { docker run --rm -it -v "$PWD":/work mylatex/ieicej:3.4a "$@"; }
+ieicej() { docker run --rm -it -v "$PWD":/work ghcr.io/shok1122/mylatex/ieicej:3.4a "$@"; }
 # 使用例: ieicej main.tex / ieicej -w main.tex
 ```
 
@@ -136,10 +136,12 @@ $pdf_mode = 1;
 
 ## イメージの作成（管理者向け）
 
-イメージの作成・公開は，このリポジトリの `Makefile` で行います（`make help` で一覧を表示）．
+通常は main ブランチに push するだけで，GitHub Actions がイメージをビルド・テストして ghcr.io に公開します．
+手元でビルド・確認するときは，このリポジトリの `Makefile` を使います（`make help` で一覧を表示）．
 
 ```
 .
+├── .github/workflows/build.yml   # 自動ビルド・公開 (GitHub Actions)
 ├── Makefile            # イメージのビルド・テスト・push
 ├── Dockerfile          # 全スタイル共通の Dockerfile
 ├── docker/
@@ -163,6 +165,7 @@ $pdf_mode = 1;
 | `IMAGE_PREFIX`      | `mylatex`                | イメージ名の接頭辞．レジストリを含めてもよい（例: `ghcr.io/<user>/mylatex`） |
 | `TEXLIVE_IMAGE`     | `texlive/texlive:latest` | ベースの TeX Live イメージ                               |
 | `DOCKER_BUILD_OPTS` | （なし）                 | `docker build` への追加オプション（例: `--pull`）        |
+| `SOURCE_URL`        | （なし）                 | イメージに記録するリポジトリの URL．ghcr.io のパッケージがリポジトリと紐付く |
 
 ```sh
 make build                                      # すべてのスタイルをビルド
@@ -178,6 +181,26 @@ TeX Live の版を固定したい場合は `TEXLIVE_IMAGE=texlive/texlive:TL2025
 ベースは展開後に約 9 GB あるため，Docker のイメージ保存先に十分な空きが必要です
 （containerd のイメージストアを使っている場合は，保存先は `/var/lib/containerd` です）．
 
+### GitHub Actions による自動ビルド
+
+`.github/workflows/build.yml` が次のように動きます．
+
+| きっかけ                                   | 処理                                                |
+| ------------------------------------------ | --------------------------------------------------- |
+| main ブランチへの push                     | `make test`（ビルド＋サンプルで確認）→ `make push`   |
+| プルリクエスト                             | `make test` のみ（push しない）                      |
+| Actions 画面の「Run workflow」（手動実行） | main で実行した場合は push まで，それ以外は test のみ |
+
+- 対象は `Dockerfile`, `Makefile`, `docker/`, `style/`, `examples/` などイメージに関わるファイルが
+  変わったときだけです（README の変更などでは動きません）．
+- 公開先は `ghcr.io/<リポジトリのオーナー>/mylatex/<name>:<version>` で，すべてのスタイル・版をビルドし直して push します．
+- ghcr.io へのログインには Actions が自動で発行する `GITHUB_TOKEN` を使うため，トークンの登録は不要です．
+- 初回の公開後，パッケージは非公開（private）になります．ログインなしで pull できるようにするには，
+  GitHub のプロフィール → Packages → `mylatex/ieicej` → Package settings → Change visibility で Public にしてください
+  （スタイルを追加して新しいパッケージができたときも同様です）．
+- 先に手元から `make push` で同名のパッケージを作っていた場合，Actions からの push は拒否されます．
+  そのパッケージの Package settings → Manage Actions access でこのリポジトリを追加し，Role を Write にしてください．
+
 ### スタイルの追加
 
 1. `style/<name>/<version>/` にスタイル一式（`.cls`, `.sty`, `.bst` など）を置く
@@ -188,6 +211,7 @@ TeX Live の版を固定したい場合は `TEXLIVE_IMAGE=texlive/texlive:TL2025
    ```
 3. `make build STYLE=<name>/<version>` を実行 → `mylatex/<name>:<version>` ができる
 4. サンプル原稿を `examples/<name>/main.tex` に置けば `make test` で確認できる
+5. main ブランチに push すると，GitHub Actions が `ghcr.io/<オーナー>/mylatex/<name>:<version>` を公開する
 
 ### 仕組み
 
