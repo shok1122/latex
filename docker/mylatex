@@ -171,6 +171,17 @@ cd "$srcdir"
 args=(-outdir="$builddir" -interaction=nonstopmode -halt-on-error -file-line-error)
 ((verbose)) || args+=(-silent)
 
+# latexmk reruns a rule that failed last time only when one of its recorded
+# inputs changed. A missing file is recorded under the name TeX asked for
+# (e.g. fig/architecture, not fig/architecture.pdf), so adding it afterwards
+# goes unnoticed ("Nothing to do"). After a failed build (a rule's last field
+# in the fdb file is 1 or 2), drop latexmk's state so that it starts with a
+# latex run. (-g is no good: it reruns bibtex first, on the truncated .aux.)
+fdb=$builddir/$job.fdb_latexmk
+if [[ -f $fdb ]] && grep -qE '^\["[^"]+"\] .* [12]$' "$fdb"; then
+  rm -f -- "$fdb"
+fi
+
 if ((watch)); then
   # success_cmd/failure_cmd run through the shell after every rebuild.
   export MYLATEX_PDF=$builddir/$job.pdf MYLATEX_OUT=$outdir/$job.pdf
