@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+# mylatex - compile a LaTeX project mounted into the container with latexmk.
+#
+# Intermediate files go to a build directory (default: .build next to the
+# main .tex file); only the resulting PDF is copied out of it.
+set -euo pipefail
+
+readonly ENGINES="uplatex platex pdflatex lualatex xelatex"
+readonly STYLE_DIR=/opt/mylatex/style
+
+die() {
+  echo "mylatex: $*" >&2
+  exit 2
+}
+
+usage() {
+  local run="docker run --rm -v \"\$PWD\":/work ${MYLATEX_IMAGE:-<image>}"
+  cat <<EOF
+${MYLATEX_STYLE:-?} ${MYLATEX_STYLE_VERSION:-} 用の LaTeX コンパイル環境 (既定のエンジン: ${MYLATEX_ENGINE:-uplatex})
+
+使い方: $run [オプション] [MAIN.tex] [-- latexmkのオプション...]
+
+原稿のルートフォルダで実行し，MAIN.tex を latexmk でコンパイルして PDF を出力します．
+パスはすべて原稿のルートフォルダからの相対パスです．
+オプションだけを指定して MAIN.tex を省略した場合は main.tex を対象にします．
+
+例:
+  # main.tex をコンパイルして main.pdf を出力
+  $run main.tex
+  # paper.tex をコンパイルして dist/paper.pdf に出力
+  $run paper.tex -o dist
+  # 保存のたびに main.tex を自動でコンパイル (Ctrl-C で終了)
+  ${run/--rm/--rm -it} -w
+  # 中間ファイル (.build) を削除
+  $run --clean
+
+オプション:
+  -e, --engine ENGINE    TeX エンジン: ${ENGINES// /, }
+                         (既定: ${MYLATEX_ENGINE:-uplatex})
+  -o, --outdir DIR       PDF の出力先 (既定: MAIN.tex と同じディレクトリ)
+  -b, --builddir DIR     中間ファイルの置き場所 (既定: MAIN.tex と同じ階層の .build)
+  -w, --watch            ファイルの変更を監視して自動で再コンパイル (docker run -it で使用)
+  -c, --clean            中間ファイル (builddir) を削除して終了
+  -v, --verbose          TeX の出力をすべて表示
+      --export-style [DIR]
+                         イメージ内のスタイル一式を DIR (既定: style) にコピーして終了
+      --info             イメージの情報 (スタイル・エンジン・TeX Live) を表示して終了
+  -h, --help             このヘルプを表示
+
+イメージ内のスタイルは \\documentclass{style/<クラス名>} でも
+\\documentclass{<クラス名>} でも読み込めます．
+EOF
+}
+
+# Print the first TeX error (and BibTeX errors) from the build logs.
+show_errors() {
+  local log=$1 blg=${1%.log}.blg
+  if [[ -f $log ]]; then
+    grep -m 1 -A 8 -E '^([^ ]*:[0-9]+: |! )' "$log" >&2 || true
+  fi
+  if [[ -f $blg ]] && grep -q -i 'error' "$blg"; then
+    grep -i -B 1 -A 3 'error' "$blg" >&2 || true
+  fi
+}
+
+if (($# == 0)); then
+  usage
+  exit 0
+fi
+
+# Files written to the mounted directory should belong to its owner, not root.
+# Re-run this script as the owner of the working directory unless the caller
+# already chose a user (docker run --user) or the directory is root-owned.
+if [[ $(id -u) == 0 && -z ${MYLATEX_KEEP_ROOT:-} ]]; then
+  owner=$(stat -c %u:%g .)
+  if [[ ${owner%%:*} != 0 ]]; then
+    exec setpriv --reuid="${owner%%:*}" --regid="${owner##*:}" --clear-groups -- "$0" "$@"
+  fi
+fi
+[[ -w ${HOME:-/nonexistent} ]] || export HOME=/tmp
+# Keep log lines unwrapped so error messages stay readable.
+export max_print_line=${max_print_line:-1000}
+
+engine=${MYLATEX_ENGINE:-uplatex}
+main="" outdir="" builddir="" export_dir=style
+action=build watch=0 verbose=0
+latexmk_extra=()
+
+need_arg() { [[ $# -ge 2 && -n $2 ]] || die "$1 には引数が必要です"; }
+
+while (($#)); do
+  case $1 in
+    -e | --engine) need_arg "$@"; engine=$2; shift 2 ;;
+    -o | --outdir) need_arg "$@"; outdir=$2; shift 2 ;;
+    -b | --builddir) need_arg "$@"; builddir=$2; shift 2 ;;
+    --engine=*) engine=${1#*=}; shift ;;
+    --outdir=*) outdir=${1#*=}; shift ;;
+    --builddir=*) builddir=${1#*=}; shift ;;
+    -w | --watch) watch=1; shift ;;
+    -c | --clean) action=clean; shift ;;
+    -v | --verbose) verbose=1; shift ;;
+    --export-style)
+      action=export
+      if [[ $# -ge 2 && $2 != -* ]]; then export_dir=$2; shift; fi
+      shift
+      ;;
+    --info) action=info; shift ;;
+    --show-errors) need_arg "$@"; show_errors "$2"; exit 0 ;; # used by watch mode
+    -h | --help) usage; exit 0 ;;
+    --) shift; latexmk_extra=("$@"); break ;;
+    -*) die "不明なオプションです: $1 (--help を参照)" ;;
+    *)
+      [[ -z $main ]] || die "MAIN.tex は 1 つだけ指定してください: $main, $1"
+      main=$1
+      shift
+      ;;
+  esac
+done
+
+[[ " $ENGINES " == *" $engine "* ]] || die "未対応のエンジンです: $engine (${ENGINES// /, })"
+export MYLATEX_ENGINE=$engine
+
+case $action in
+  info)
+    echo "style:   ${MYLATEX_STYLE:-unknown} ${MYLATEX_STYLE_VERSION:-}"
+    echo "engine:  $engine"
+    echo "texlive: $(tex --version | head -n 1)"
+    echo "latexmk: $(latexmk -v | grep -m 1 -o 'Version.*')"
+    echo "files:"
+    (cd "$STYLE_DIR" && find . -type f | sed 's|^\./|  |' | sort)
+    exit 0
+    ;;
+  export)
+    if [[ -e $export_dir ]] && [[ -n $(ls -A "$export_dir") ]]; then
+      die "$export_dir は既に存在して空ではありません (上書きはしません)"
+    fi
+    mkdir -p "$export_dir"
+    cp -r "$STYLE_DIR"/. "$export_dir"/
+    echo "mylatex: スタイル一式を $export_dir/ にコピーしました"
+    exit 0
+    ;;
+esac
+
+root=$PWD
+main=${main:-main.tex}
+[[ -f $main || ! -f $main.tex ]] || main=$main.tex
+if [[ ! -f $main ]]; then
+  die "$main が見つかりません (作業ディレクトリ: $root)
+  プロジェクトのルートを -v \"\$PWD\":/work でマウントしているか確認してください"
+fi
+
+srcdir=$(cd "$(dirname "$main")" && pwd)
+file=$(basename "$main")
+job=${file%.*}
+outdir=$(realpath -m "${outdir:-$srcdir}")
+builddir=$(realpath -m "${builddir:-$srcdir/.build}")
+case $srcdir/ in
+  "$builddir"/*) die "--builddir には MAIN.tex のあるディレクトリ (またはその親) 以外を指定してください" ;;
+esac
+rel() { realpath -m --relative-to="$root" "$1"; }
+
+if [[ $action == clean ]]; then
+  rm -rf -- "$builddir"
+  echo "mylatex: $(rel "$builddir") を削除しました"
+  exit 0
+fi
+
+mkdir -p "$builddir" "$outdir"
+cd "$srcdir"
+
+args=(-outdir="$builddir" -interaction=nonstopmode -halt-on-error -file-line-error)
+((verbose)) || args+=(-silent)
+
+if ((watch)); then
+  # success_cmd/failure_cmd run through the shell after every rebuild.
+  export MYLATEX_PDF=$builddir/$job.pdf MYLATEX_OUT=$outdir/$job.pdf
+  export MYLATEX_LOG=$builddir/$job.log MYLATEX_OUT_REL=$(rel "$outdir/$job.pdf")
+  args+=(-pvc
+    -e '$success_cmd = q(cp -f -- "$MYLATEX_PDF" "$MYLATEX_OUT" && echo "mylatex: $MYLATEX_OUT_REL を出力しました");'
+    -e '$failure_cmd = q(mylatex --show-errors "$MYLATEX_LOG");')
+fi
+
+# This script is PID 1 in the container, which ignores signals it does not
+# trap; forward them so that Ctrl-C and docker stop end latexmk promptly.
+latexmk "${args[@]}" ${latexmk_extra[@]+"${latexmk_extra[@]}"} "$file" &
+child=$!
+interrupted=0
+trap 'interrupted=1; kill -TERM "$child" 2>/dev/null' INT TERM
+status=0
+wait "$child" || status=$?
+# wait returns early when a trapped signal arrives; collect the real status.
+while kill -0 "$child" 2>/dev/null; do
+  status=0
+  wait "$child" || status=$?
+done
+trap - INT TERM
+
+if ((interrupted)); then
+  echo "mylatex: 中断しました" >&2
+  exit 130
+fi
+if ((status != 0)); then
+  ((verbose)) || show_errors "$builddir/$job.log"
+  echo "mylatex: コンパイルに失敗しました (ログ: $(rel "$builddir/$job.log"))" >&2
+  exit "$status"
+fi
+
+if [[ $builddir != "$outdir" ]]; then
+  cp -f -- "$builddir/$job.pdf" "$outdir/$job.pdf"
+fi
+echo "mylatex: $(rel "$outdir/$job.pdf") を出力しました"

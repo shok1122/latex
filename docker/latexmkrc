@@ -1,0 +1,36 @@
+# mylatex: system-wide latexmk configuration (read via $LATEXMKRCSYS).
+#
+# The TeX engine is selected by the MYLATEX_ENGINE environment variable,
+# whose default is baked into each style image. A latexmkrc placed in the
+# project directory is read after this file, so it can override anything here.
+
+my $engine = $ENV{MYLATEX_ENGINE} || 'uplatex';
+
+if ($engine eq 'uplatex') {
+    $latex     = 'uplatex %O %S';
+    $bibtex    = 'upbibtex %O %S';
+    $makeindex = 'upmendex %O -o %D %S';
+    $dvipdf    = 'dvipdfmx %O -o %D %S';
+    $pdf_mode  = 3;
+} elsif ($engine eq 'platex') {
+    $latex     = 'platex %O %S';
+    $bibtex    = 'pbibtex %O %S';
+    $makeindex = 'mendex %O -o %D %S';
+    $dvipdf    = 'dvipdfmx %O -o %D %S';
+    $pdf_mode  = 3;
+} elsif ($engine eq 'pdflatex') {
+    $pdf_mode = 1;
+} elsif ($engine eq 'lualatex') {
+    $pdf_mode = 4;
+} elsif ($engine eq 'xelatex') {
+    $pdf_mode = 5;
+} else {
+    die "mylatex: unknown engine '$engine' (MYLATEX_ENGINE)\n";
+}
+
+$dvi_mode        = 0;
+$postscript_mode = 0;
+
+# Never try to open a viewer inside the container (relevant for -pvc).
+$preview_mode = 0;
+$view         = 'none';

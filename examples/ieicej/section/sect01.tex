@@ -1,0 +1,14 @@
+\section{まえがき}
+\label{sec:intro}
+
+学会ごとに配布されるスタイルファイルは版によって挙動が異なるため，
+執筆者ごとに環境を揃えることは容易ではない\cite{knuth1984}．
+本稿では，スタイル一式を焼き込んだコンテナを用いてこの問題を解決する\cite{denshi2024}．
+\ref{sec:method}章で手法を述べる．
+
+コンパイル時間$T$は，パス数$n$と1パスあたりの時間$t_i$を用いて
+\begin{equation}
+  T = \sum_{i=1}^{n} t_i
+  \label{eq:time}
+\end{equation}
+と表される．

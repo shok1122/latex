@@ -1,0 +1,46 @@
+%% mylatex/ieicej:3.4a のサンプル（論文）
+%% コンパイル: docker run --rm -v "$PWD":/work mylatex/ieicej:3.4a
+\documentclass[paper]{style/ieicej}
+\usepackage[dvipdfmx]{graphicx,xcolor}
+\usepackage[fleqn]{amsmath}
+\usepackage{newtxtext}% 英数字フォントの設定を変更しないでください
+\usepackage[varg]{newtxmath}% 英数字フォントの設定を変更しないでください
+
+\setcounter{page}{1}
+
+\field{}
+\jtitle{Dockerによる\LaTeX{}コンパイル環境の構築}
+\etitle{Building a \LaTeX{} Compilation Environment with Docker}
+\authorlist{%
+ \authorentry{電子 太郎}{Taro DENSHI}{kobe}\MembershipNumber{}
+}
+\affiliate[kobe]{神戸大学}{Kobe University}
+\jalcdoi{???????????}% ← このままにしておいてください
+
+\begin{document}
+\begin{abstract}
+本稿では，学会スタイルごとにDockerイメージを作成し，
+\LaTeX{}原稿をコンテナ内でコンパイルする方法を示す．
+\end{abstract}
+\begin{keyword}
+Docker，\LaTeX{}，コンパイル環境
+\end{keyword}
+\begin{eabstract}
+This paper shows how to compile \LaTeX{} manuscripts in a container
+built for each journal style.
+\end{eabstract}
+\begin{ekeyword}
+Docker, \LaTeX{}, build environment
+\end{ekeyword}
+\maketitle
+
+\input{section/sect01}
+\input{section/sect02}
+
+\ack
+本サンプルの作成にあたり，ご協力いただいた皆様に感謝する．
+
+\bibliographystyle{style/sieicej}
+\bibliography{bib/refs}
+
+\end{document}
