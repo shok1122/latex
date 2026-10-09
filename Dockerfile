@@ -1,11 +1,14 @@
 # syntax=docker/dockerfile:1
 #
-# One image per style: style/<STYLE_NAME>/<STYLE_VERSION>/ is baked in.
-# Build with make, e.g. make build STYLE=ieicej/3.4a -> mylatex/ieicej:3.4a
+# Two kinds of images, built with make:
+#   --target style  style/<STYLE_NAME>/<STYLE_VERSION>/ is baked in, one image
+#                   per style (make build STYLE=ieicej/3.4a -> mylatex/ieicej:3.4a)
+#   --target plain  no style; style/ of the mounted project is used at run time
+#                   (make build-plain -> mylatex:latest)
 ARG TEXLIVE_IMAGE=texlive/texlive:latest
-FROM ${TEXLIVE_IMAGE}
+FROM ${TEXLIVE_IMAGE} AS common
 
-# ---- Common layers: identical (and therefore shared) for every style ----
+# ---- Common layers: identical (and therefore shared) for every image ----
 ENV LANG=C.UTF-8 \
     LATEXMKRCSYS=/etc/mylatex/latexmkrc
 COPY docker/latexmkrc /etc/mylatex/latexmkrc
@@ -13,7 +16,17 @@ COPY --chmod=755 docker/mylatex /usr/local/bin/mylatex
 WORKDIR /work
 ENTRYPOINT ["mylatex"]
 
+# ---- Image without a style ----
+FROM common AS plain
+ARG ENGINE=uplatex
+ARG IMAGE=mylatex
+ENV MYLATEX_ENGINE=${ENGINE} \
+    MYLATEX_IMAGE=${IMAGE}
+LABEL org.opencontainers.image.title="${IMAGE}" \
+      org.opencontainers.image.description="LaTeX build environment that uses the style/ directory of the mounted project"
+
 # ---- Style specific layers ----
+FROM common AS style
 ARG STYLE_NAME
 ARG STYLE_VERSION
 ARG ENGINE=uplatex

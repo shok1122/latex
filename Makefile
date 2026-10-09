@@ -1,4 +1,5 @@
-# mylatex: style/<name>/<version>/ ごとの LaTeX コンパイル用 Docker イメージを作成する
+# mylatex: style/<name>/<version>/ ごとの LaTeX コンパイル用 Docker イメージと，
+# スタイルを含まない (原稿フォルダの style/ を使う) イメージを作成する
 # 使い方は `make help` を参照してください．
 
 ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
@@ -19,6 +20,11 @@ STYLES := $(patsubst $(ROOT)/style/%/,%,$(wildcard $(ROOT)/style/*/*/))
 style_arg := $(patsubst style/%,%,$(patsubst %/,%,$(subst :,/,$(STYLE))))
 SELECTED  := $(if $(style_arg),$(filter $(style_arg) $(style_arg)/%,$(STYLES)),$(STYLES))
 
+# The plain image has no style baked in; it uses style/ of the mounted project.
+# Without STYLE, build/test/push/rmi handle it along with every style.
+PLAIN_IMAGE := $(IMAGE_PREFIX):latest
+WITH_PLAIN  := $(if $(style_arg),,plain)
+
 style_name    = $(firstword $(subst /, ,$(1)))
 style_version = $(lastword $(subst /, ,$(1)))
 style_image   = $(IMAGE_PREFIX)/$(subst /,:,$(1))
@@ -34,10 +40,13 @@ define HELP
   test    examples/<name>/main.tex をコンパイルして動作確認
   push    イメージをレジストリに push (:latest を含む)
   rmi     ビルドしたイメージを削除
+  build-plain, test-plain, push-plain, rmi-plain
+          スタイルを含まないイメージ (<IMAGE_PREFIX>:latest) だけを対象にする．
+          STYLE を省略した build/test/push/rmi にも含まれる
 
 変数
   STYLE              対象のスタイル: <name>/<version> (例: ieicej/3.4a) または <name> (全版)．
-                     省略時はすべてのスタイル
+                     省略時はすべてのスタイルとスタイルを含まないイメージ
   IMAGE_PREFIX       イメージ名の接頭辞 (既定: mylatex)．レジストリを含めてもよい
                      (例: ghcr.io/<user>/mylatex)
   TEXLIVE_IMAGE      ベースの TeX Live イメージ (既定: texlive/texlive:latest)
@@ -54,18 +63,26 @@ export HELP
 
 .DEFAULT_GOAL := help
 BUILD_TARGETS := $(addprefix build/,$(STYLES))
-.PHONY: help build list test push rmi $(BUILD_TARGETS)
+.PHONY: help build list test push rmi build-plain test-plain push-plain rmi-plain $(BUILD_TARGETS)
 
 help:
 	@printf '%s\n\n' "$$HELP"
 	@echo "スタイル: $(or $(STYLES),(なし))"
 
-build: $(addprefix build/,$(SELECTED))
-	$(if $(SELECTED),,$(error STYLE=$(STYLE) に該当するスタイルがありません: $(STYLES)))
+build: $(if $(WITH_PLAIN),build-plain) $(addprefix build/,$(SELECTED))
+	$(if $(SELECTED)$(WITH_PLAIN),,$(error STYLE=$(STYLE) に該当するスタイルがありません: $(STYLES)))
+
+build-plain:
+	@echo "==> $(PLAIN_IMAGE) (style: none, base: $(TEXLIVE_IMAGE))"
+	docker build $(DOCKER_BUILD_OPTS) --target plain \
+	  --build-arg TEXLIVE_IMAGE=$(TEXLIVE_IMAGE) \
+	  --build-arg IMAGE=$(IMAGE_PREFIX) \
+	  $(if $(SOURCE_URL),--label org.opencontainers.image.source=$(SOURCE_URL)) \
+	  -t $(PLAIN_IMAGE) $(ROOT)
 
 $(BUILD_TARGETS): build/%:
 	@echo "==> $(call style_image,$*) (engine: $(call style_engine,$*), base: $(TEXLIVE_IMAGE))"
-	docker build $(DOCKER_BUILD_OPTS) \
+	docker build $(DOCKER_BUILD_OPTS) --target style \
 	  --build-arg TEXLIVE_IMAGE=$(TEXLIVE_IMAGE) \
 	  --build-arg STYLE_NAME=$(call style_name,$*) \
 	  --build-arg STYLE_VERSION=$(call style_version,$*) \
@@ -81,11 +98,13 @@ $(BUILD_TARGETS): build/%:
 
 list:
 	@printf '%-20s %-10s %-30s %s\n' STYLE ENGINE IMAGE STATUS
+	@st=$$(docker image inspect $(PLAIN_IMAGE) >/dev/null 2>&1 && echo built || echo -); \
+	  printf '%-20s %-10s %-30s %s\n' '(none)' '(style/)' $(PLAIN_IMAGE) $$st
 	@$(foreach s,$(STYLES),img=$(call style_image,$(s)); \
 	  st=$$(docker image inspect $$img >/dev/null 2>&1 && echo built || echo -); \
 	  printf '%-20s %-10s %-30s %s\n' $(s) $(call style_engine,$(s)) $$img $$st;)
 
-test: build
+test: build $(if $(WITH_PLAIN),test-plain)
 	@for s in $(SELECTED); do \
 	  name=$${s%%/*}; ex=$(ROOT)/examples/$$name; \
 	  if [ ! -f $$ex/main.tex ]; then echo "skip: $$s ($$ex/main.tex がありません)"; continue; fi; \
@@ -96,8 +115,20 @@ test: build
 	  rm -rf $$tmp; echo "ok: $$s"; \
 	done
 
+# Test the plain image with each style copied into the example's style/.
+test-plain: build-plain
+	@for s in $(STYLES); do \
+	  ex=$(ROOT)/examples/$${s%%/*}; \
+	  if [ ! -f $$ex/main.tex ]; then echo "skip: plain + $$s ($$ex/main.tex がありません)"; continue; fi; \
+	  echo "==> test $(PLAIN_IMAGE) + style/$$s ($$ex)"; \
+	  tmp=$$(mktemp -d); cp -r $$ex/. $$tmp/; cp -r $(ROOT)/style/$$s $$tmp/style; \
+	  docker run --rm -v $$tmp:/work $(PLAIN_IMAGE) main.tex && test -s $$tmp/main.pdf \
+	    || { echo "test 失敗: plain + $$s (作業フォルダ: $$tmp)" >&2; exit 1; }; \
+	  rm -rf $$tmp; echo "ok: plain + $$s"; \
+	done
+
 # Push each selected version, and :latest when it points to that version.
-push: build
+push: build $(if $(WITH_PLAIN),push-plain)
 	@for s in $(SELECTED); do \
 	  img=$(IMAGE_PREFIX)/$${s%%/*}:$${s#*/}; latest=$(IMAGE_PREFIX)/$${s%%/*}:latest; \
 	  docker push $$img || exit 1; \
@@ -106,10 +137,16 @@ push: build
 	  fi; \
 	done
 
-rmi:
+push-plain: build-plain
+	docker push $(PLAIN_IMAGE)
+
+rmi: $(if $(WITH_PLAIN),rmi-plain)
 	@for s in $(SELECTED); do \
 	  img=$(IMAGE_PREFIX)/$${s%%/*}:$${s#*/}; latest=$(IMAGE_PREFIX)/$${s%%/*}:latest; \
 	  id=$$(docker image inspect -f '{{.Id}}' $$img 2>/dev/null) || continue; \
 	  if [ "$$(docker image inspect -f '{{.Id}}' $$latest 2>/dev/null)" = "$$id" ]; then docker rmi $$latest; fi; \
 	  docker rmi $$img; \
 	done
+
+rmi-plain:
+	@if docker image inspect $(PLAIN_IMAGE) >/dev/null 2>&1; then docker rmi $(PLAIN_IMAGE); fi

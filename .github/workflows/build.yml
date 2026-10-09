@@ -1,5 +1,6 @@
-# Build the style images, test them with examples/, and push them to
-# ghcr.io/<owner>/mylatex/<name>:<version> on every push to main.
+# Build the style images and the plain image (no style baked in), test them
+# with examples/, and push them to ghcr.io/<owner>/mylatex/<name>:<version>
+# and ghcr.io/<owner>/mylatex:latest on every push to main.
 # Pull requests only build and test.
 name: Build images
 

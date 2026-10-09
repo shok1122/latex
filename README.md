@@ -2,10 +2,12 @@
 
 学会などのスタイル一式を焼き込んだ Docker イメージを，スタイル・版ごとに作成します．
 原稿フォルダをマウントしてコンテナを実行すると PDF ができます．
+スタイルを焼き込まず，原稿フォルダの `style/` に置いたスタイル一式を使うイメージもあります．
 
 | スタイルフォルダ      | イメージ名                                                    |
 | --------------------- | ------------------------------------------------------------- |
 | `style/ieicej/3.4a/`  | `ghcr.io/shok1122/mylatex/ieicej:3.4a`（最新版には `:latest` も付与） |
+| （なし）              | `ghcr.io/shok1122/mylatex`（原稿フォルダの `style/` を使用．[詳細](#スタイルを埋め込まないイメージ)） |
 
 イメージは main ブランチへの push を契機に GitHub Actions でビルドされ，
 GitHub Container Registry (ghcr.io) に公開されます（[イメージの作成](#イメージの作成管理者向け) を参照）．
@@ -77,6 +79,37 @@ ieicej() { docker run --rm -it -v "$PWD":/work ghcr.io/shok1122/mylatex/ieicej:3
 # 使用例: ieicej main.tex / ieicej -w main.tex
 ```
 
+### スタイルを埋め込まないイメージ
+
+`ghcr.io/shok1122/mylatex` にはスタイルが入っていません．代わりに，原稿のルートフォルダの
+`style/` に置いたスタイル一式（`.cls`, `.sty`, `.bst` など）を使ってコンパイルします．
+イメージにないスタイルや，配布元から入手したばかりの版をそのまま使いたいときに便利です．
+
+```
+root/
+├── main.tex
+├── style/          # スタイル一式 (ieicej.cls, sieicej.bst など)
+├── section/sect01.tex
+└── bib/refs.bib
+```
+
+```sh
+docker pull ghcr.io/shok1122/mylatex
+cd root
+docker run --rm -v "$PWD":/work ghcr.io/shok1122/mylatex main.tex
+```
+
+- 原稿での指定方法はスタイルを埋め込んだイメージと同じです（[原稿での指定方法](#原稿での指定方法) を参照）．
+  `\documentclass{style/ieicej}` でも `\documentclass{ieicej}` でも読み込め，
+  `style/` の下のサブフォルダにあるファイルも名前だけで見つかります．
+  大元の `.tex` がサブフォルダにあっても，ルートの `style/` を使います．
+- 既定のエンジンは `uplatex` です．`style/mylatex.conf` に `ENGINE=pdflatex` のように書くと変更できます
+  （`-e` オプションのほうが優先されます）．
+- スタイルを埋め込んだイメージの `--export-style` で取り出した `style/` は，そのまま使えます
+  （`mylatex.conf` も一緒に取り出されます）．
+- `style/` がなくても，TeX Live に含まれるクラス（`jlreq`, `article` など）の原稿はコンパイルできます．
+- オプションは下記と同じです（`--export-style` を除く）．`--info` では `style/` 内のファイルを一覧します．
+
 ### オプション
 
 | オプション                 | 説明                                                         |
@@ -88,7 +121,7 @@ ieicej() { docker run --rm -it -v "$PWD":/work ghcr.io/shok1122/mylatex/ieicej:3
 | `-w, --watch`              | ファイルの変更を監視して自動で再コンパイル（`docker run -it` で使用） |
 | `-c, --clean`              | 中間ファイルを削除して終了                                   |
 | `-v, --verbose`            | TeX の出力をすべて表示                                       |
-| `--export-style [DIR]`     | イメージ内のスタイル一式を `DIR`（既定: `style`）にコピー．既存のフォルダには上書きしない |
+| `--export-style [DIR]`     | イメージ内のスタイル一式を `DIR`（既定: `style`）にコピー．既存のフォルダには上書きしない（スタイルを埋め込んだイメージのみ） |
 | `--info`                   | イメージの情報を表示                                         |
 | `-h, --help`               | ヘルプを表示                                                 |
 | `-- <latexmkのオプション>` | 以降を latexmk にそのまま渡す                                |
@@ -132,7 +165,8 @@ Overleaf など Docker 以外の環境でも同じ `\documentclass{style/ieicej}
 $pdf_mode = 1;
 ```
 
-優先順位は `-e` オプション > 原稿フォルダの `latexmkrc` > イメージの既定値です．
+優先順位は `-e` オプション > 原稿フォルダの `latexmkrc` > イメージの既定値です
+（スタイルを埋め込まないイメージでは，イメージの既定値の代わりに `style/mylatex.conf` の `ENGINE=`，なければ `uplatex`）．
 
 ## イメージの作成（管理者向け）
 
@@ -143,7 +177,7 @@ $pdf_mode = 1;
 .
 ├── .github/workflows/build.yml   # 自動ビルド・公開 (GitHub Actions)
 ├── Makefile            # イメージのビルド・テスト・push
-├── Dockerfile          # 全スタイル共通の Dockerfile
+├── Dockerfile          # 全イメージ共通の Dockerfile (スタイルを埋め込まないイメージも含む)
 ├── docker/
 │   ├── mylatex         # コンテナのエントリポイント（コンパイル用コマンド）
 │   └── latexmkrc       # エンジン設定（latexmk のシステム設定）
@@ -158,17 +192,22 @@ $pdf_mode = 1;
 | `make test`  | `examples/<name>/main.tex` をコンパイルして動作確認          |
 | `make push`  | イメージをレジストリに push（`:latest` を含む）              |
 | `make rmi`   | ビルドしたイメージを削除                                     |
+| `make build-plain` などの `-plain` 付き | スタイルを埋め込まないイメージ（`<IMAGE_PREFIX>:latest`）だけを対象にする（`build`, `test`, `push`, `rmi`） |
+
+`STYLE` を指定しない `make build` / `test` / `push` / `rmi` は，スタイルを埋め込まないイメージも対象にします．
+`make test-plain` は，`examples/<name>/` の写しに `style/<name>/<version>/` を `style/` としてコピーしてコンパイルします．
 
 | 変数                | 既定値                   | 説明                                                     |
 | ------------------- | ------------------------ | -------------------------------------------------------- |
-| `STYLE`             | （すべて）               | `ieicej/3.4a` の形式．`ieicej` だけなら全版              |
+| `STYLE`             | （すべて）               | `ieicej/3.4a` の形式．`ieicej` だけなら全版．省略時はスタイルを埋め込まないイメージも含む |
 | `IMAGE_PREFIX`      | `mylatex`                | イメージ名の接頭辞．レジストリを含めてもよい（例: `ghcr.io/<user>/mylatex`） |
 | `TEXLIVE_IMAGE`     | `texlive/texlive:latest` | ベースの TeX Live イメージ                               |
 | `DOCKER_BUILD_OPTS` | （なし）                 | `docker build` への追加オプション（例: `--pull`）        |
 | `SOURCE_URL`        | （なし）                 | イメージに記録するリポジトリの URL．ghcr.io のパッケージがリポジトリと紐付く |
 
 ```sh
-make build                                      # すべてのスタイルをビルド
+make build                                      # すべてのイメージをビルド
+make build-plain                                # スタイルを埋め込まないイメージだけをビルド
 make test STYLE=ieicej/3.4a                     # ビルドしてサンプルで動作確認
 make push IMAGE_PREFIX=ghcr.io/<user>/mylatex   # レジストリ名付きでビルドして push
 ```
@@ -193,10 +232,12 @@ TeX Live の版を固定したい場合は `TEXLIVE_IMAGE=texlive/texlive:TL2025
 
 - 対象は `Dockerfile`, `Makefile`, `docker/`, `style/`, `examples/` などイメージに関わるファイルが
   変わったときだけです（README の変更などでは動きません）．
-- 公開先は `ghcr.io/<リポジトリのオーナー>/mylatex/<name>:<version>` で，すべてのスタイル・版をビルドし直して push します．
+- 公開先は `ghcr.io/<リポジトリのオーナー>/mylatex/<name>:<version>` と，スタイルを埋め込まない
+  `ghcr.io/<リポジトリのオーナー>/mylatex:latest` で，すべてをビルドし直して push します．
 - ghcr.io へのログインには Actions が自動で発行する `GITHUB_TOKEN` を使うため，トークンの登録は不要です．
 - 初回の公開後，パッケージは非公開（private）になります．ログインなしで pull できるようにするには，
-  GitHub のプロフィール → Packages → `mylatex/ieicej` → Package settings → Change visibility で Public にしてください
+  GitHub のプロフィール → Packages → `mylatex/ieicej`（スタイルを埋め込まないイメージは `mylatex`）
+  → Package settings → Change visibility で Public にしてください
   （スタイルを追加して新しいパッケージができたときも同様です）．
 - 先に手元から `make push` で同名のパッケージを作っていた場合，Actions からの push は拒否されます．
   そのパッケージの Package settings → Manage Actions access でこのリポジトリを追加し，Role を Write にしてください．
@@ -219,8 +260,14 @@ TeX Live の版を固定したい場合は `TEXLIVE_IMAGE=texlive/texlive:TL2025
   `$TEXMFLOCAL/bibtex/bst/style/` にコピーして `mktexlsr` しています．kpathsea は
   `style/ieicej.cls` のようなパス付きの名前を「`style/` で終わるフォルダにある `ieicej.cls`」として探すため，
   パス付き・パス無しの両方で読み込めます．元の一式は `/opt/mylatex/style/` にもあります．
-- **共通レイヤ**: Dockerfile の前半（エントリポイントなど）はスタイルに依存しないため，
-  複数のスタイルのイメージでベースの TeX Live を共有します．スタイルごとの増分は数 MB です．
+- **スタイルを埋め込まないイメージ**: Dockerfile の `plain` ステージ（`--target plain`）です．
+  コンパイル時に `TEXINPUTS`, `BSTINPUTS`, `BIBINPUTS` の先頭に，作業フォルダ（`.`）と
+  `/work/style//`（サブフォルダを含む）を加えて名前だけでの指定を可能にしています．
+  さらに `/work/style` へのリンク `/tmp/mylatex/style` を置いた `/tmp/mylatex` も加え，
+  サブフォルダの原稿からも `style/ieicej` で読み込めるようにしています．
+- **共通レイヤ**: Dockerfile の前半（`common` ステージ．エントリポイントなど）はスタイルに依存しないため，
+  複数のスタイルのイメージとスタイルを埋め込まないイメージでベースの TeX Live を共有します．
+  スタイルごとの増分は数 MB です．
 - **エンジンの選択**: `docker/latexmkrc` が環境変数 `MYLATEX_ENGINE`（イメージごとの既定値，`-e` で上書き）
   に応じて latexmk を設定します．
 - **ファイルの所有者**: root で起動された場合，マウントしたフォルダの所有者 UID/GID に切り替えて

@@ -8,6 +8,17 @@ set -euo pipefail
 readonly ENGINES="uplatex platex pdflatex lualatex xelatex"
 readonly STYLE_DIR=/opt/mylatex/style
 
+# Style images have their style installed in TEXMFLOCAL and MYLATEX_STYLE set.
+# The plain image has neither: it uses the style/ folder of the project, whose
+# mylatex.conf ("ENGINE=...") may set the default engine.
+plain=0
+[[ -n ${MYLATEX_STYLE:-} ]] || plain=1
+default_engine=${MYLATEX_ENGINE:-uplatex}
+if ((plain)) && [[ -r style/mylatex.conf ]]; then
+  conf_engine=$(sed -n 's/^ENGINE=//p' style/mylatex.conf | tail -n 1 | tr -d '[:space:]')
+  default_engine=${conf_engine:-$default_engine}
+fi
+
 die() {
   echo "mylatex: $*" >&2
   exit 2
@@ -15,8 +26,12 @@ die() {
 
 usage() {
   local run="docker run --rm -v \"\$PWD\":/work ${MYLATEX_IMAGE:-<image>}"
+  if ((plain)); then
+    echo "原稿フォルダの style/ にあるスタイルを使う LaTeX コンパイル環境 (既定のエンジン: $default_engine)"
+  else
+    echo "$MYLATEX_STYLE ${MYLATEX_STYLE_VERSION:-} 用の LaTeX コンパイル環境 (既定のエンジン: $default_engine)"
+  fi
   cat <<EOF
-${MYLATEX_STYLE:-?} ${MYLATEX_STYLE_VERSION:-} 用の LaTeX コンパイル環境 (既定のエンジン: ${MYLATEX_ENGINE:-uplatex})
 
 使い方: $run [オプション] [MAIN.tex] [-- latexmkのオプション...]
 
@@ -36,20 +51,34 @@ ${MYLATEX_STYLE:-?} ${MYLATEX_STYLE_VERSION:-} 用の LaTeX コンパイル環�
 
 オプション:
   -e, --engine ENGINE    TeX エンジン: ${ENGINES// /, }
-                         (既定: ${MYLATEX_ENGINE:-uplatex})
+                         (既定: $default_engine)
   -o, --outdir DIR       PDF の出力先 (既定: MAIN.tex と同じディレクトリ)
   -b, --builddir DIR     中間ファイルの置き場所 (既定: MAIN.tex と同じ階層の .build)
   -w, --watch            ファイルの変更を監視して自動で再コンパイル (docker run -it で使用)
   -c, --clean            中間ファイル (builddir) を削除して終了
   -v, --verbose          TeX の出力をすべて表示
+EOF
+  ((plain)) || cat <<EOF
       --export-style [DIR]
                          イメージ内のスタイル一式を DIR (既定: style) にコピーして終了
+EOF
+  cat <<EOF
       --info             イメージの情報 (スタイル・エンジン・TeX Live) を表示して終了
   -h, --help             このヘルプを表示
 
-イメージ内のスタイルは \\documentclass{style/<クラス名>} でも
-\\documentclass{<クラス名>} でも読み込めます．
 EOF
+  if ((plain)); then
+    cat <<EOF
+スタイル一式 (.cls, .sty, .bst など) は原稿フォルダの style/ に置きます．
+\\documentclass{style/<クラス名>} でも \\documentclass{<クラス名>} でも読み込めます．
+style/mylatex.conf に ENGINE=<エンジン> と書くと既定のエンジンを変更できます．
+EOF
+  else
+    cat <<'EOF'
+イメージ内のスタイルは \documentclass{style/<クラス名>} でも
+\documentclass{<クラス名>} でも読み込めます．
+EOF
+  fi
 }
 
 # Print the first TeX error (and BibTeX errors) from the build logs.
@@ -81,7 +110,7 @@ fi
 # Keep log lines unwrapped so error messages stay readable.
 export max_print_line=${max_print_line:-1000}
 
-engine=${MYLATEX_ENGINE:-uplatex}
+engine=$default_engine
 main="" outdir="" builddir="" export_dir=style
 action=build watch=0 verbose=0
 latexmk_extra=()
@@ -122,15 +151,26 @@ export MYLATEX_ENGINE=$engine
 
 case $action in
   info)
-    echo "style:   ${MYLATEX_STYLE:-unknown} ${MYLATEX_STYLE_VERSION:-}"
+    if ((plain)); then
+      echo "style:   (なし: 原稿フォルダの style/ を使用)"
+      files_dir=style
+    else
+      echo "style:   $MYLATEX_STYLE ${MYLATEX_STYLE_VERSION:-}"
+      files_dir=$STYLE_DIR
+    fi
     echo "engine:  $engine"
     echo "texlive: $(tex --version | head -n 1)"
     echo "latexmk: $(latexmk -v | grep -m 1 -o 'Version.*')"
     echo "files:"
-    (cd "$STYLE_DIR" && find . -type f | sed 's|^\./|  |' | sort)
+    if [[ -d $files_dir ]]; then
+      (cd "$files_dir" && find . -type f | sed 's|^\./|  |' | sort)
+    else
+      echo "  (style/ がありません)"
+    fi
     exit 0
     ;;
   export)
+    ((!plain)) || die "このイメージにはスタイルが含まれていません (原稿フォルダの style/ を使用します)"
     if [[ -e $export_dir ]] && [[ -n $(ls -A "$export_dir") ]]; then
       die "$export_dir は既に存在して空ではありません (上書きはしません)"
     fi
@@ -163,6 +203,18 @@ if [[ $action == clean ]]; then
   rm -rf -- "$builddir"
   echo "mylatex: $(rel "$builddir") を削除しました"
   exit 0
+fi
+
+if ((plain)); then
+  # Let TeX and BibTeX find the project's style/ (and its subfolders) by bare
+  # names such as \documentclass{ieicej}. A path element holding a link named
+  # style also resolves style/<name> from manuscripts in subfolders; its path
+  # is fixed so that latexmk's record of the files stays valid across runs.
+  mkdir -p /tmp/mylatex
+  ln -sfn "$root/style" /tmp/mylatex/style
+  for var in TEXINPUTS BSTINPUTS BIBINPUTS; do
+    export "$var=.:/tmp/mylatex:$root/style//:${!var:-}"
+  done
 fi
 
 mkdir -p "$builddir" "$outdir"
@@ -212,6 +264,9 @@ if ((interrupted)); then
 fi
 if ((status != 0)); then
   ((verbose)) || show_errors "$builddir/$job.log"
+  if ((plain)) && [[ ! -d $root/style ]]; then
+    echo "mylatex: style/ がありません．スタイル一式を原稿フォルダの style/ に置いてください" >&2
+  fi
   echo "mylatex: コンパイルに失敗しました (ログ: $(rel "$builddir/$job.log"))" >&2
   exit "$status"
 fi
